@@ -1,9 +1,10 @@
 %[text] # `Compare: Uninterrupted, Segmented, & Independent Traces:`
 %%
-%[text] ## `Generate Data:`
-% Configure MATLAB:
+%[text] ## `Configure MATLAB:`
 restoredefaultpath;    clear;    close all;    clc;    addpath(genpath(fileparts(mfilename('fullpath')))) % In case "Configure" is not available.
 Configure
+%%
+%[text] ## `Generate Data:`
 %[text] ### `Set HMM(2) Parameters:` $\\mathbf{\\vartheta}\\equiv\\{\\pi\_{\\sigma\_{1}\\to\\sigma\_{2}},\\pi\_{\\sigma\_{2}\\to\\sigma\_{1}}\\}\\sim\\mathbb{B}(1,1)\_$
 GT.p = betarnd(1,1); % Probability(σ1 -> σ2)
 GT.q = betarnd(1,1); % Probability(σ2 -> σ1)
@@ -58,7 +59,7 @@ BMany   = cell(nSegments,1)                                ;
 for nSegment = 1 : nSegments, BMany{nSegment} = getEmissionMatrix(Many.w{nSegment}, EmissionModel, nStates);    end
 BRest  = cell(nSegments,1);
 for nSegment = 1 : nSegments, BRest{nSegment} = getEmissionMatrix(Rest.w{nSegment}, EmissionModel, nStates);    end
-%[text] ###  `Likelihood:`
+%[text] ###  Marginal Posterior`:`
 ZERO                        = zeros(numel(Grid.p), numel(Grid.q));
 Long.logLikelihood          = ZERO;
 Long.logLikelihoodRestarted = ZERO;
@@ -104,11 +105,11 @@ if useParallel
 %[text] #### $\\mathbb{P}(\\mathbf{\\vartheta} \\,|\\, \\mathbf{\\mathit{w}},\\mathbf{\\phi})$ `(Parallel)`
             rowL(qIndex) = getMarginalLikelihood(BLong_local, StationaryDistribution, TransitionMatrix);
 %[text] #### $\\mathbb{P}(\\mathbf{\\vartheta} \\,|\\, \\widetilde{\\mathbf{w}},\\mathbf{\\phi})$ `(Parallel)`
-            rowLrestart(qIndex) = getSegmentedMarginalLikelihood(BLong_local, segStarts_local, segEnds_local, StationaryDistribution, TransitionMatrix);
+            rowLrestart(qIndex) = getStationaryMarginalLikelihood(BLong_local, segStarts_local, segEnds_local, StationaryDistribution, TransitionMatrix);
             % Explicitly Partitioned (for Diagnostics)
-            rowR(qIndex) = getSegmentedMarginalLikelihoodCELL(BRest_local, StationaryDistribution, TransitionMatrix);
+            rowR(qIndex) = getStationaryMarginalLikelihoodCELL(BRest_local, StationaryDistribution, TransitionMatrix);
 %[text] #### $\\mathbb{P}(\\mathbf{\\vartheta} \\,|\\, \\mathbf{{u},\\mathbf{\\phi})$ `(Parallel)`
-            rowM(qIndex) = getSegmentedMarginalLikelihoodCELL(BMany_local, StationaryDistribution, TransitionMatrix);
+            rowM(qIndex) = getStationaryMarginalLikelihoodCELL(BMany_local, StationaryDistribution, TransitionMatrix);
         end
 
         longLogL(pIndex,:)        = rowL;
@@ -129,11 +130,11 @@ else
 %[text] #### $\\mathbb{P}(\\mathbf{\\vartheta} \\,|\\, \\mathbf{\\mathit{w}},\\mathbf{\\phi})$
             longLogL(pIndex,qIndex) = getMarginalLikelihood(BLong, StationaryDistribution, TransitionMatrix);
 %[text] #### $\\mathbb{P}(\\mathbf{\\vartheta} \\,|\\, \\widetilde{\\mathbf{w}},\\mathbf{\\phi})$
-            LL_long_restart(pIndex,qIndex) = getSegmentedMarginalLikelihood(BLong, startSegment, endSegment, StationaryDistribution, TransitionMatrix);
+            LL_long_restart(pIndex,qIndex) = getStationaryMarginalLikelihood(BLong, startSegment, endSegment, StationaryDistribution, TransitionMatrix);
             % Explicitly Partitioned (for Diagnostics)
-            LL_rest(pIndex,qIndex) = getSegmentedMarginalLikelihoodCELL(BRest, StationaryDistribution, TransitionMatrix);
+            LL_rest(pIndex,qIndex) = getStationaryMarginalLikelihoodCELL(BRest, StationaryDistribution, TransitionMatrix);
 %[text] #### $\\mathbb{P}(\\mathbf{\\vartheta} \\,|\\, \\mathbf{{u},\\mathbf{\\phi})$
-            LL_many(pIndex,qIndex) = getSegmentedMarginalLikelihoodCELL(BMany, StationaryDistribution, TransitionMatrix);
+            LL_many(pIndex,qIndex) = getStationaryMarginalLikelihoodCELL(BMany, StationaryDistribution, TransitionMatrix);
         end
     end
 end
@@ -264,7 +265,7 @@ end
 zoomTimes   = Start : End;
 %[text] ###  `Initialize:`
 close    all
-Figure = figure("Name",'Figure(1)', "Position",[80 80 1280 880]);
+Figure = figure("Name",'Figure(2)', "Position",[80 80 1280 880]);
 if nSegments < 4;    Tiles  = tiledlayout(Figure, 5, Showing, "TileSpacing",'Tight', "Padding",'Compact');
 else            ;    Tiles  = tiledlayout(Figure, 6, Showing, "TileSpacing",'Tight', "Padding",'Compact');
 end
@@ -595,46 +596,38 @@ function Sample = sampleCategorical(Prob)
     Sample = find(rand <= C, 1, "First");
 end
 %}
-function B = getEmissionMatrix(y, EmissionModel, nStates)
-    y = y(:); N = numel(y);
-    B = zeros(N,nStates);
-    for k = 1 : nStates
-        B(:,k) = EmissionModel(y,k);
+function B      = getEmissionMatrix(w, EmissionModel, nStates)
+         w      = w(:); N = numel(w);
+         B      = zeros(N,nStates);
+    for      k  = 1 : nStates
+         B(:,k) = EmissionModel(w,k);
     end
 end
 
 function [P, logP] = normalizeLog2D(logU, x, y)
-    M = max(logU(:));
-    U = exp(logU - M);
-    Z = trapz(y, trapz(x, U, 1));
-    if Z <= 0 || ~isfinite(Z)
-        sU = sum(U(:));
-        if sU <= 0 || ~isfinite(sU)
-            P    = ones(size(U))/numel(U);
-            logP = -log(numel(U)) + zeros(size(U));
-        else
-            P    = U / sU;
-            logP = logU - (log(sU) + M);
+    M = max(logU(:))               ;
+    U = exp(logU - M)              ;
+    Z = trapz(y, trapz(x, U, 1))   ;
+    if Z <= 0 || ~isfinite(Z)      ;    sU = sum(U(:))             ;
+        if sU <= 0 || ~isfinite(sU);     P = ones(size(U))/numel(U);    logP = -log(numel(U)) + zeros(size(U));
+        else                       ;     P = U / sU                ;    logP = logU - (log(sU) + M)           ;
         end
-    else
-        P    = U / Z;
-        logP = logU - (log(Z) + M);
+    else                           ;     P = U / Z                 ;    logP = logU - (log(Z) + M)            ;
     end
 end
 
 function Summary = summarizePosterior(x, PDF)
-    PDF = max(PDF(:)', 0);
-    Z   = trapz(x, PDF);
-    if Z <= 0 || ~isfinite(Z)
-        Summary.Mean = NaN; Summary.HPD = [NaN NaN]; return;
-    end
-    PDF = PDF / Z;
-    CDF = cumtrapz(x, PDF); CDF = CDF / CDF(end);
-    [CDF, Index] = unique(CDF,'stable');  xU = x(Index);
-    if CDF(1)  > 0, CDF = [0; CDF];   xU = [xU(1); xU]; end
-    if CDF(end)< 1, CDF = [CDF; 1];   xU = [xU; xU(end)]; end
-    Summary.Mean = trapz(x, x.*PDF);
-    Summary.HPD  = [interp1(CDF, xU, 0.025, "linear"), interp1(CDF, xU, 0.975, "linear")];
+    PDF          = max(PDF(:)', 0);
+    Z            = trapz(x, PDF);
+    if Z <= 0   || ~isfinite(Z);    Summary.Mean = NaN;    Summary.HPD = [NaN NaN];    return;        end
+    PDF          = PDF / Z              ;
+    CDF          = cumtrapz(x, PDF)     ; 
+    CDF          = CDF / CDF(end)       ;
+    [CDF, Index] = unique(CDF,"Stable") ;   xU = x(Index)     ;
+    if CDF(1)    > 0,     CDF = [0; CDF];   xU = [xU(1); xU]  ;    end
+    if CDF(end)  < 1,     CDF = [CDF; 1];   xU = [xU; xU(end)];    end
+    Summary.Mean = trapz(x, x.*PDF)     ;
+    Summary.HPD  = [interp1(CDF, xU, 0.025, "Linear"), interp1(CDF, xU, 0.975, "Linear")];
 end
 
 function y = pdfNormal(w, mu, varg)
@@ -648,14 +641,14 @@ function drawZoomConnectors(Figure, topAxes, botAxes, x0, x1, Color, LineWidth)
     pBotL  = data2norm(botAxes, x0, botAxes.YLim(2));
     pBotR  = data2norm(botAxes, x1, botAxes.YLim(2));
 
-    annotation(Figure, 'line', [pTopL(1) pBotL(1)], [pTopL(2)+0.025 pBotL(2)], "LineStyle",'--','Color',Color,"LineWidth",LineWidth);
-    annotation(Figure, 'line', [pTopR(1) pBotR(1)], [pTopR(2)+0.025 pBotR(2)], "LineStyle",'--','Color',Color,"LineWidth",LineWidth);
+    annotation(Figure, "Line", [pTopL(1) pBotL(1)], [pTopL(2)+0.025 pBotL(2)], "LineStyle",'--','Color',Color,"LineWidth",LineWidth);
+    annotation(Figure, "Line", [pTopR(1) pBotR(1)], [pTopR(2)+0.025 pBotR(2)], "LineStyle",'--','Color',Color,"LineWidth",LineWidth);
 
 end
 
 function p = data2norm(ax, x, y)
     oldUnits = ax.Units; 
-    ax.Units = 'normalized';
+    ax.Units = "Normalized";
     ap = ax.Position;
     xr = (x - ax.XLim(1)) / diff(ax.XLim);
     yr = (y - ax.YLim(1)) / diff(ax.YLim);
@@ -685,100 +678,61 @@ function Bits = JensenShannonDivergence(P, Q, x, y)
 end
 
 function P = normalize2D(P, x, y)
-% Normalize a nonnegative 2D density on the x-by-y grid.
-
-    P = max(P, 0);
+% Normalize a NonNegative 2D Density on the x-by-y Grid.
+    P = max(P, 0)               ;
     Z = trapz(y, trapz(x, P, 1));
-
-    if ~(Z > 0) || ~isfinite(Z)
-        error('Density failed to normalize.');
-    end
-
+    if~(Z > 0) || ~isfinite(Z);    error("Density Failed to Normalize!");    end
     P = P / Z;
 end
 
-function logL = getMarginalLikelihood(B, pi0, TransitionMatrix)
-% Equation (9):
-%   L(w|theta,phi) = rho0 * B1 * Pi * B2 * ... * Pi * BN * 1
-%
-% We evaluate the matrix product from right to left:
-%   v = B1 * Pi * B2 * ... * Pi * BN * 1
-% and then finish with rho0 * v.
-%
-% A scaling factor is accumulated only to prevent underflow.
+function logL = getMarginalLikelihood(B, StationaryDistribution, TransitionMatrix)
+% Equation (9): P(w|θ,φ) = ρ0 * B1 * Π * B2 * ... * Π * BN * 1
+% We Evaluate the Matrix Product from Right to Left: v = B1*Π*B2*...*Π*BN*1, and then finish with ρ0*v.
+% A Scaling Factor is Accumulated Only to Prevent Underflow.
 
     [v, logScale] = rightProduct(B, 1, size(B,1), TransitionMatrix);
 
-    z = pi0(:).' * v;
-    if ~(z > 0) || ~isfinite(z)
-        z = realmin;
-    end
-
-    logL = logScale + log(z);
+    z     = StationaryDistribution(:).' * v;
+    if~(z > 0) || ~isfinite(z);    z = realmin;    end
+    logL  = logScale +  log(z);
 end
 
-function logL = getSegmentedMarginalLikelihood(B, segStarts, segEnds, pi0, TransitionMatrix)
-% Equation (10):
-%   L(u|theta,phi) = prod_{ell=1}^L rho0' * v_ell
-%
-% where
-%   v_ell = (B_start * Pi * ... * Pi * B_end) * 1
-
+function logL = getStationaryMarginalLikelihood(B, Starts, Ends, StationaryDistribution, TransitionMatrix)
+% Equation (10): P(u|θ,φ) = prod_{ell=1}^L ρ0' * v_l, where v_l = (B_start * Π * ... * Π * B_end) * 1
     logL = 0;
+    for l = 1:numel(Starts)
+        [vEll, logScaleEll] = rightProduct(B, Starts(l), Ends(l), TransitionMatrix);
 
-    for ell = 1:numel(segStarts)
-        [vEll, logScaleEll] = rightProduct(B, segStarts(ell), segEnds(ell), TransitionMatrix);
-
-        z = pi0(:).' * vEll;
-        if ~(z > 0) || ~isfinite(z)
-            z = realmin;
-        end
-
-        logL = logL + logScaleEll + log(z);
+        z     = StationaryDistribution(:).' * vEll;
+        if~(z > 0) || ~isfinite(z)                ;    z = realmin;    end
+        logL  = logL + logScaleEll + log(z)       ;
     end
 end
 
-function logL = getSegmentedMarginalLikelihoodCELL(Bcell, pi0, TransitionMatrix)
-% Same Equation (10), but when each segment already lives in its own cell.
-
-    logL = 0;
-
-    for ell = 1:numel(Bcell)
-        logL = logL + getMarginalLikelihood(Bcell{ell}, pi0, TransitionMatrix);
-    end
+function logL = getStationaryMarginalLikelihoodCELL(Bcell, pi0, TransitionMatrix)
+% Same Equation (10), but Used when Each Segment Already Lives in Its Own Cell.
+    logL  = 0             ;
+    for l = 1:numel(Bcell);    logL = logL + getMarginalLikelihood(Bcell{l}, pi0, TransitionMatrix);    end
 end
 
-function [v, logScale] = rightProduct(B, iStart, iEnd, TransitionMatrix)
-% Computes
-%   v = B_iStart * Pi * B_{iStart+1} * ... * Pi * B_iEnd * 1
-% from right to left, with scaling for numerical stability.
-
-    nStates  = size(B,2);
+function [v, logScale] = rightProduct(B, Start, End, TransitionMatrix)
+% Computes v = B_Start*Π * B_{Start+1} * ... * Π*B_End * 1 from Right to Left, with Scaling for Numerical Stability.
+    nStates  = size(B,2)      ;
     v        = ones(nStates,1);
-    logScale = 0;
+    logScale = 0              ;
 
-    for n = iEnd : -1 : iStart
-        % Multiply by diagonal emission matrix B_n:
-        % diag(B(n,:)) * v  ==  B(n,:).' .* v
+    for n = End : -1 : Start
+        % Multiply by Diagonal Emission Matrix B_n: diag(B(n,:)) * v  ==  B(n,:).' .* v
         v = B(n,:).' .* v;
-
-        % Insert transition matrix between consecutive observations
-        if n > iStart
-            v = TransitionMatrix * v;
-        end
-
-        % Scale to avoid underflow in long products
-        s = sum(v);
-        if ~(s > 0) || ~isfinite(s)
-            s = realmin;
-        end
-
-        v = v / s;
-        logScale = logScale + log(s);
+        % Insert TransitionMatrix Between Consecutive Observations
+        if n > Start;    v = TransitionMatrix * v;    end
+        % Scale to Avoid Underflow in Long Products
+        s           = sum(v)           ;
+        if~(s > 0) || ~isfinite(s)     ;    s = realmin;    end
+        v           = v / s            ;
+        logScale    = logScale + log(s);
     end
 end
-
-
 
 %[appendix]{"version":"1.0"}
 %---
